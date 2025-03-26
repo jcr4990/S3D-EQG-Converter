@@ -38,22 +38,26 @@ def parse_eqg(input_file):
         print(f"Model name: {eqg_data['model_name']}")
 
     # Extract materials
-    material_section_match = re.search(r'NUMMATERIALS\s+(\d+)(.*?)(?=NUMVERTICES)', content, re.DOTALL)
+    material_section_match = re.search(
+        r'NUMMATERIALS\s+(\d+)(.*?)(?=NUMVERTICES)', content, re.DOTALL)
     if material_section_match:
         num_materials = int(material_section_match.group(1))
         material_section = material_section_match.group(2)
 
         # Find all material blocks - improved pattern to catch the last material block
-        material_blocks = re.findall(r'MATERIAL\s+"([^"]+)"(.*?)(?=MATERIAL\s+"|NUMVERTICES|\Z)', material_section, re.DOTALL)
+        material_blocks = re.findall(
+            r'MATERIAL\s+"([^"]+)"(.*?)(?=MATERIAL\s+"|NUMVERTICES|\Z)', material_section, re.DOTALL)
 
-        print(f"Found {len(material_blocks)} material blocks (expected {num_materials})")
+        print(
+            f"Found {len(material_blocks)} material blocks (expected {num_materials})")
 
         for material_name, block in material_blocks:
             shader_match = re.search(r'SHADERTAG\s+"([^"]+)"', block)
             shader = shader_match.group(1) if shader_match else ""
 
             textures = {}
-            texture_matches = re.findall(r'PROPERTY\s+"([^"]+)"\s+\d+\s+"([^"]+)"', block)
+            texture_matches = re.findall(
+                r'PROPERTY\s+"([^"]+)"\s+\d+\s+"([^"]+)"', block)
             for prop, texture in texture_matches:
                 textures[prop] = texture
 
@@ -67,10 +71,12 @@ def parse_eqg(input_file):
 
     # Verify all materials were found and processed
     if len(eqg_data['materials']) != num_materials:
-        print(f"WARNING: Material count mismatch! Found {len(eqg_data['materials'])}, expected {num_materials}")
+        print(
+            f"WARNING: Material count mismatch! Found {len(eqg_data['materials'])}, expected {num_materials}")
 
     # Extract vertices - IMPROVED REGEX PATTERN
-    vertex_block_match = re.search(r'NUMVERTICES\s+(\d+)(.*?)NUMFACES', content, re.DOTALL)
+    vertex_block_match = re.search(
+        r'NUMVERTICES\s+(\d+)(.*?)NUMFACES', content, re.DOTALL)
     if vertex_block_match:
         num_vertices = int(vertex_block_match.group(1))
         vertex_block = vertex_block_match.group(2)
@@ -79,14 +85,16 @@ def parse_eqg(input_file):
         vertex_pattern = r'VERTEX\s+//\s+(\d+)([\s\S]*?)(?=VERTEX\s+//\s+\d+|NUMFACES|\Z)'
         vertex_matches = re.findall(vertex_pattern, vertex_block, re.DOTALL)
 
-        print(f"Found {len(vertex_matches)} vertex blocks (expected {num_vertices})")
+        print(
+            f"Found {len(vertex_matches)} vertex blocks (expected {num_vertices})")
 
         for vertex_index, vertex_data in vertex_matches:
             vertex = {}
             vertex_index = int(vertex_index)
 
             # Extract position (XYZ)
-            xyz_match = re.search(r'XYZ\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', vertex_data)
+            xyz_match = re.search(
+                r'XYZ\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', vertex_data)
             if xyz_match:
                 try:
                     vertex['position'] = [
@@ -95,22 +103,26 @@ def parse_eqg(input_file):
                         parse_float(xyz_match.group(3))
                     ]
                 except Exception as e:
-                    print(f"Warning: Could not parse XYZ for vertex {vertex_index}: {xyz_match.groups()}. Error: {e}")
+                    print(
+                        f"Warning: Could not parse XYZ for vertex {vertex_index}: {xyz_match.groups()}. Error: {e}")
                     vertex['position'] = [0.0, 0.0, 0.0]
 
             # Extract UV coordinates
-            uv_matches = re.findall(r'UV\s+([-\d.e+]+)\s+([-\d.e+]+)', vertex_data)
+            uv_matches = re.findall(
+                r'UV\s+([-\d.e+]+)\s+([-\d.e+]+)', vertex_data)
             if uv_matches:
                 vertex['uvs'] = []
                 for u, v in uv_matches:
                     try:
                         vertex['uvs'].append([parse_float(u), parse_float(v)])
                     except Exception as e:
-                        print(f"Warning: Could not parse UV coordinates for vertex {vertex_index}: {u}, {v}. Error: {e}")
+                        print(
+                            f"Warning: Could not parse UV coordinates for vertex {vertex_index}: {u}, {v}. Error: {e}")
                         vertex['uvs'].append([0.0, 0.0])
 
             # Extract normals
-            normal_match = re.search(r'NORMAL\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', vertex_data)
+            normal_match = re.search(
+                r'NORMAL\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', vertex_data)
             if normal_match:
                 try:
                     vertex['normal'] = [
@@ -119,13 +131,16 @@ def parse_eqg(input_file):
                         parse_float(normal_match.group(3))
                     ]
                 except Exception as e:
-                    print(f"Warning: Could not parse normal for vertex {vertex_index}: {normal_match.groups()}. Error: {e}")
+                    print(
+                        f"Warning: Could not parse normal for vertex {vertex_index}: {normal_match.groups()}. Error: {e}")
                     vertex['normal'] = [0.0, 0.0, 0.0]
 
             # Extract color/tint
-            tint_match = re.search(r'TINT\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', vertex_data)
+            tint_match = re.search(
+                r'TINT\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)', vertex_data)
             if tint_match:
-                vertex['tint'] = [int(tint_match.group(1)), int(tint_match.group(2)), int(tint_match.group(3)), int(tint_match.group(4))]
+                vertex['tint'] = [int(tint_match.group(1)), int(tint_match.group(2)), int(
+                    tint_match.group(3)), int(tint_match.group(4))]
 
             eqg_data['vertices'].append(vertex)
 
@@ -133,10 +148,12 @@ def parse_eqg(input_file):
 
         # Verify all vertices were found and processed
         if len(eqg_data['vertices']) != num_vertices:
-            print(f"WARNING: Vertex count mismatch! Found {len(eqg_data['vertices'])}, expected {num_vertices}")
+            print(
+                f"WARNING: Vertex count mismatch! Found {len(eqg_data['vertices'])}, expected {num_vertices}")
 
     # Extract faces
-    face_block_match = re.search(r'NUMFACES\s+(\d+)(.*?)(?=NUMBONES|$)', content, re.DOTALL)
+    face_block_match = re.search(
+        r'NUMFACES\s+(\d+)(.*?)(?=NUMBONES|$)', content, re.DOTALL)
     if face_block_match:
         num_faces = int(face_block_match.group(1))
         face_block = face_block_match.group(2)
@@ -155,13 +172,14 @@ def parse_eqg(input_file):
             face = {}
 
             # Extract triangle indices
-            triangle_match = re.search(r'TRIANGLE\s+(\d+)\s+(\d+)\s+(\d+)', face_data)
+            triangle_match = re.search(
+                r'TRIANGLE\s+(\d+)\s+(\d+)\s+(\d+)', face_data)
             if triangle_match:
-                # Trying reversing triangle winding order
-                face['indices'] = [int(triangle_match.group(1)), int(triangle_match.group(3)), int(triangle_match.group(2))]
-                # face['indices'] = [int(triangle_match.group(1)), int(triangle_match.group(2)), int(triangle_match.group(3))]
+                face['indices'] = [int(triangle_match.group(1)), int(
+                    triangle_match.group(3)), int(triangle_match.group(2))]
             else:
-                print(f"Warning: Triangle indices not found for face {face_index}")
+                print(
+                    f"Warning: Triangle indices not found for face {face_index}")
                 continue  # Skip this face if indices are missing
 
             # Extract material
@@ -174,12 +192,16 @@ def parse_eqg(input_file):
                     face['material'] = eqg_data['materials'][0]['name']
                 else:
                     face['material'] = "DEFAULT"
-                print(f"Warning: Material not found for face {face_index}, using default: {face['material']}")
+                print(
+                    f"Warning: Material not found for face {face_index}, using default: {face['material']}")
 
             # Extract other properties
-            face['passable'] = 1 if re.search(r'PASSABLE\s+1', face_data) else 0
-            face['transparent'] = 1 if re.search(r'TRANSPARENT\s+1', face_data) else 0
-            face['collision'] = 1 if re.search(r'COLLISIONREQUIRED\s+1', face_data) else 0
+            face['passable'] = 1 if re.search(
+                r'PASSABLE\s+1', face_data) else 0
+            face['transparent'] = 1 if re.search(
+                r'TRANSPARENT\s+1', face_data) else 0
+            face['collision'] = 1 if re.search(
+                r'COLLISIONREQUIRED\s+1', face_data) else 0
 
             eqg_data['faces'].append(face)
 
@@ -262,11 +284,16 @@ def convert_to_s3d(eqg_data):
     dm_sprite_def = f'DMSPRITEDEF2 "{model_name}_DMSPRITEDEF"\n'
     dm_sprite_def += '\tTAGINDEX 0\n'
 
-    # Calculate center offset (maybe average of all vertex positions?)
-    center_x = sum(v['position'][0] for v in eqg_data['vertices']) / len(eqg_data['vertices'])
-    center_y = sum(v['position'][1] for v in eqg_data['vertices']) / len(eqg_data['vertices'])
-    center_z = sum(v['position'][2] for v in eqg_data['vertices']) / len(eqg_data['vertices'])
-    dm_sprite_def += f'\tCENTEROFFSET {center_x:.8e} {center_y:.8e} {center_z:.8e}\n\n'
+    # Calculate center
+    center_x = sum(v['position'][0]
+                   for v in eqg_data['vertices']) / len(eqg_data['vertices'])
+    center_y = sum(v['position'][1]
+                   for v in eqg_data['vertices']) / len(eqg_data['vertices'])
+    center_z = sum(v['position'][2]
+                   for v in eqg_data['vertices']) / len(eqg_data['vertices'])
+
+    # Set centeroffset to zero
+    dm_sprite_def += f'\tCENTEROFFSET 0.00000000e+00 0.00000000e+00 0.00000000e+00\n\n'
 
     # Add vertices
     dm_sprite_def += f'\tNUMVERTICES {len(eqg_data["vertices"])}\n'
@@ -304,7 +331,8 @@ def convert_to_s3d(eqg_data):
 
     # Add polyhedron faces
     dm_sprite_def += '\tPOLYHEDRON\n'
-    dm_sprite_def += '\t\tSPRITE "NEGATIVE_TWO"\n'  # Changed from DEFINITION to SPRITE as per example
+    # Changed from DEFINITION to SPRITE as per example
+    dm_sprite_def += '\t\tSPRITE "NEGATIVE_TWO"\n'
     dm_sprite_def += f'\tNUMFACE2S {len(eqg_data["faces"])}\n'
 
     for i, face in enumerate(eqg_data['faces']):
@@ -316,61 +344,76 @@ def convert_to_s3d(eqg_data):
     # Add mesh operations (empty section)
     dm_sprite_def += '\n\tNUMMESHOPS 0\n\n'
 
-    # Create material groupings by material
-    material_counts = {}
+    # Create material-to-face mapping
+    # Count faces per material and maintain the order they appear in the model
+    material_to_faces = {}
+    material_order = []
+
     for face in eqg_data['faces']:
         mat_name = face['material']
-        if mat_name not in material_counts:
-            material_counts[mat_name] = 0
-        material_counts[mat_name] += 1
+        if mat_name not in material_to_faces:
+            material_to_faces[mat_name] = 0
+            material_order.append(mat_name)
+        material_to_faces[mat_name] += 1
 
-    # Add face material groups
-    dm_sprite_def += f'\tFACEMATERIALGROUPS {len(material_counts)}'
-    face_index = 0
-    for i, mat_name in enumerate(eqg_data['materials']):
-        if mat_name['name'] in material_counts and material_counts[mat_name['name']] > 0:
-            # Changed order to match format: count first, then material index
-            dm_sprite_def += f' {material_counts[mat_name["name"]]} {i}'
-            face_index += material_counts[mat_name['name']]
+    # Map material names to material indices in the palette
+    material_name_to_index = {}
+    for i, material in enumerate(eqg_data['materials']):
+        material_name_to_index[material['name']] = i
+
+    # Generate FACEMATERIALGROUPS section
+    dm_sprite_def += f'\tFACEMATERIALGROUPS {len(material_order)}'
+    for mat_name in material_order:
+        face_count = material_to_faces[mat_name]
+        mat_index = material_name_to_index.get(
+            mat_name, 0)  # Default to 0 if not found
+        dm_sprite_def += f' {face_count} {mat_index}'
     dm_sprite_def += '\n'
 
-    # Add vertex material groups (single line format)
-    total_vertices = len(eqg_data['vertices'])
-    material_count = len(material_counts)
-    vertex_groups_str = f'\tVERTEXMATERIALGROUPS {material_count}'
+    # For VERTEXMATERIALGROUPS, we need to associate vertices with materials
+    # The challenge is that vertices can be shared between faces with different materials
+    # We'll use a greedy approach: assign each vertex to the first material it's used with
 
-    # Calculate base vertices per material
-    base_per_material = total_vertices // material_count
-    remainder = total_vertices % material_count
+    # First, create a mapping of vertex to material
+    vertex_to_material = {}
+    for face in eqg_data['faces']:
+        mat_name = face['material']
+        mat_index = material_name_to_index.get(mat_name, 0)
 
-    # Distribute vertices, giving one extra to early materials until remainder is used up
-    vertex_index = 0
-    for i, mat_name in enumerate(eqg_data['materials']):
-        if mat_name['name'] in material_counts and material_counts[mat_name['name']] > 0:
-            if i < remainder:
-                # Give one extra vertex to this material
-                vert_count = base_per_material + 1
-            else:
-                vert_count = base_per_material
+        # Assign each vertex in this face to this material if not already assigned
+        for vertex_idx in face['indices']:
+            if vertex_idx not in vertex_to_material:
+                vertex_to_material[vertex_idx] = mat_index
 
-            # Changed order to match format: count first, then material index
-            vertex_groups_str += f' {vert_count} {i}'
-            vertex_index += vert_count
+    # Count vertices per material
+    material_vertex_counts = {}
+    for mat_index in range(len(eqg_data['materials'])):
+        material_vertex_counts[mat_index] = 0
 
-    # Add the complete string with newline at the end
-    dm_sprite_def += vertex_groups_str + '\n'
+    # Count vertices for each material
+    for mat_index in vertex_to_material.values():
+        material_vertex_counts[mat_index] += 1
 
-    # Verify all vertices were assigned
-    print(f"Total vertices: {total_vertices}, Assigned in groups: {vertex_index}")
-    if total_vertices != vertex_index:
-        print(f"WARNING: Vertex count mismatch in material groups! {total_vertices} vs {vertex_index}")
-        # Ensure all vertices are accounted for
-        if vertex_index < total_vertices:
-            # Add remaining vertices to the last material
-            last_mat_index = material_count - 1
-            extra_verts = total_vertices - vertex_index
-            print(f"Adding {extra_verts} extra vertices to material {last_mat_index}")
-            # Update the count in the output string (would need to fix the string manipulation)
+    # Handle vertices that aren't part of any face
+    unassigned_vertices = set(
+        range(len(eqg_data['vertices']))) - set(vertex_to_material.keys())
+
+    # Distribute unassigned vertices across materials proportionally
+    if unassigned_vertices:
+        print(
+            f"Found {len(unassigned_vertices)} vertices not assigned to any face")
+        if len(eqg_data['materials']) > 0:
+            # Assign to first material for simplicity
+            for vertex_idx in unassigned_vertices:
+                vertex_to_material[vertex_idx] = 0
+                material_vertex_counts[0] += 1
+
+    # Generate VERTEXMATERIALGROUPS section
+    dm_sprite_def += f'\tVERTEXMATERIALGROUPS {len(material_vertex_counts)}'
+    for mat_index, count in sorted(material_vertex_counts.items()):
+        if count > 0:
+            dm_sprite_def += f' {count} {mat_index}'
+    dm_sprite_def += '\n'
 
     # Calculate bounding box
     min_x = min(v['position'][0] for v in eqg_data['vertices'])
@@ -484,10 +527,12 @@ def write_s3d(s3d_data, output_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Convert EQG models to S3D format.')
+    parser = argparse.ArgumentParser(
+        description='Convert EQG models to S3D format.')
     parser.add_argument('input', help='Input EQG model file')
     parser.add_argument('output', help='Output S3D model file')
-    parser.add_argument('--it', help='Specify a custom item number for the output model name (e.g., "IT123")', default=None)
+    parser.add_argument(
+        '--it', help='Specify a custom item number for the output model name (e.g., "IT123")', default=None)
 
     args = parser.parse_args()
 
