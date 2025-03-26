@@ -1,15 +1,8 @@
-#!/usr/bin/env python3
-"""
-EQG to S3D Model Converter for EverQuest
-
-This script converts EQG ASCII model files to S3D format.
-It maps the data structure from EQG to the corresponding S3D format.
-"""
-
 import re
 import os
 import sys
 import argparse
+
 
 def parse_float(value):
     """Parse a float value, handling scientific notation properly."""
@@ -20,6 +13,7 @@ def parse_float(value):
         if value.endswith('e'):
             value += '+00'
         return float(value)
+
 
 def parse_eqg(input_file):
     """Parse the EQG file into a structured format."""
@@ -163,7 +157,9 @@ def parse_eqg(input_file):
             # Extract triangle indices
             triangle_match = re.search(r'TRIANGLE\s+(\d+)\s+(\d+)\s+(\d+)', face_data)
             if triangle_match:
-                face['indices'] = [int(triangle_match.group(1)), int(triangle_match.group(2)), int(triangle_match.group(3))]
+                # Trying reversing triangle winding order
+                face['indices'] = [int(triangle_match.group(1)), int(triangle_match.group(3)), int(triangle_match.group(2))]
+                # face['indices'] = [int(triangle_match.group(1)), int(triangle_match.group(2)), int(triangle_match.group(3))]
             else:
                 print(f"Warning: Triangle indices not found for face {face_index}")
                 continue  # Skip this face if indices are missing
@@ -190,6 +186,7 @@ def parse_eqg(input_file):
         print(f"Processed {len(eqg_data['faces'])} faces")
 
     return eqg_data
+
 
 def convert_to_s3d(eqg_data):
     """Convert the parsed EQG data to S3D format."""
@@ -332,7 +329,8 @@ def convert_to_s3d(eqg_data):
     face_index = 0
     for i, mat_name in enumerate(eqg_data['materials']):
         if mat_name['name'] in material_counts and material_counts[mat_name['name']] > 0:
-            dm_sprite_def += f' {i} {material_counts[mat_name["name"]]}'
+            # Changed order to match format: count first, then material index
+            dm_sprite_def += f' {material_counts[mat_name["name"]]} {i}'
             face_index += material_counts[mat_name['name']]
     dm_sprite_def += '\n'
 
@@ -355,7 +353,8 @@ def convert_to_s3d(eqg_data):
             else:
                 vert_count = base_per_material
 
-            vertex_groups_str += f' {i} {vert_count}'
+            # Changed order to match format: count first, then material index
+            vertex_groups_str += f' {vert_count} {i}'
             vertex_index += vert_count
 
     # Add the complete string with newline at the end
@@ -381,6 +380,23 @@ def convert_to_s3d(eqg_data):
     max_y = max(v['position'][1] for v in eqg_data['vertices'])
     max_z = max(v['position'][2] for v in eqg_data['vertices'])
 
+    # Add padding to the bounding box (5% of the model's size in each dimension)
+    padding_x = (max_x - min_x) * 0.05
+    padding_y = (max_y - min_y) * 0.05
+    padding_z = (max_z - min_z) * 0.05
+    # Ensure we have at least a minimal padding of 0.001 units
+    min_padding = 0.001
+    padding_x = max(padding_x, min_padding)
+    padding_y = max(padding_y, min_padding)
+    padding_z = max(padding_z, min_padding)
+    # Apply padding to bounding box
+    min_x -= padding_x
+    min_y -= padding_y
+    min_z -= padding_z
+    max_x += padding_x
+    max_y += padding_y
+    max_z += padding_z
+
     # Add bounding box
     dm_sprite_def += f'\tBOUNDINGBOXMIN {min_x:.8e} {min_y:.8e} {min_z:.8e}\n'
     dm_sprite_def += f'\tBOUNDINGBOXMAX {max_x:.8e} {max_y:.8e} {max_z:.8e}\n'
@@ -394,10 +410,15 @@ def convert_to_s3d(eqg_data):
         dist = (dx*dx + dy*dy + dz*dz) ** 0.5
         max_dist = max(max_dist, dist)
 
+    # Add a 5% padding to the bounding radius
+    radius_padding = max_dist * 0.05
+    radius_padding = max(radius_padding, min_padding)  # Ensure minimal padding
+    max_dist += radius_padding
+
     dm_sprite_def += f'\tBOUNDINGRADIUS {max_dist:.8e}\n\n'
 
     # Add flags (copy from example)
-    dm_sprite_def += '\tFPSCALE 1\n'
+    dm_sprite_def += '\tFPSCALE 12\n'
     dm_sprite_def += '\tHEXONEFLAG 1\n'
     dm_sprite_def += '\tHEXTWOFLAG 1\n'
     dm_sprite_def += '\tHEXFOURTHOUSANDFLAG 1\n'
@@ -428,6 +449,7 @@ def convert_to_s3d(eqg_data):
     s3d_data['actor_def'] = actor_def
 
     return s3d_data
+
 
 def write_s3d(s3d_data, output_file):
     """Write the converted S3D data to the output file."""
@@ -460,19 +482,28 @@ def write_s3d(s3d_data, output_file):
         # Write actor definition
         f.write(s3d_data['actor_def'])
 
+
 def main():
     parser = argparse.ArgumentParser(description='Convert EQG models to S3D format.')
     parser.add_argument('input', help='Input EQG model file')
     parser.add_argument('output', help='Output S3D model file')
+    parser.add_argument('--it', help='Specify a custom item number for the output model name (e.g., "IT123")', default=None)
 
     args = parser.parse_args()
 
     # Run the conversion process
     eqg_data = parse_eqg(args.input)
+
+    # If custom item number is provided, override the model name
+    if args.it:
+        print(f"Using custom model name: {args.it}")
+        eqg_data['model_name'] = args.it
+
     s3d_data = convert_to_s3d(eqg_data)
     write_s3d(s3d_data, args.output)
 
     print("Conversion completed successfully!")
+
 
 if __name__ == '__main__':
     main()
