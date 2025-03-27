@@ -19,27 +19,81 @@ def parse_eqg(input_file):
     """Parse the EQG file into a structured format."""
     print(f"Parsing EQG file: {input_file}")
 
+    with open(input_file, 'r') as f:
+        content = f.read()
+
+    # Check for multiple model definitions
+    model_matches = re.findall(r'EQGMODELDEF\s+"([^"]+)"', content)
+
+    selected_model = None
+    if len(model_matches) > 1:
+        print(f"Found {len(model_matches)} models in the file:")
+        for i, model_name in enumerate(model_matches):
+            print(f"  {i+1}. {model_name}")
+
+        while True:
+            try:
+                selection = int(
+                    input("Enter the number of the model you want to parse and convert: "))
+                if 1 <= selection <= len(model_matches):
+                    selected_model = model_matches[selection-1]
+                    print(f"Selected model: {selected_model}")
+                    break
+                else:
+                    print(
+                        f"Please enter a number between 1 and {len(model_matches)}")
+            except ValueError:
+                print("Please enter a valid number")
+    else:
+        if model_matches:
+            selected_model = model_matches[0]
+            print(f"Found single model: {selected_model}")
+        else:
+            print("No models found in the file!")
+            return None
+
+    # If we found multiple models, split the content to only process the selected one
+    if len(model_matches) > 1:
+        # Find the start position of the selected model definition
+        model_start_pattern = f'EQGMODELDEF\\s+"{selected_model}"'
+        start_match = re.search(model_start_pattern, content)
+        if not start_match:
+            print(
+                f"ERROR: Could not locate the selected model {selected_model} in the file!")
+            return None
+
+        start_pos = start_match.start()
+
+        # Find the start position of the next model definition (if any)
+        next_model_pattern = r'EQGMODELDEF\s+"[^"]+"'
+        next_matches = list(re.finditer(
+            next_model_pattern, content[start_pos+1:]))
+
+        if next_matches:
+            # Extract content from start of selected model to start of next model
+            end_pos = start_pos + 1 + next_matches[0].start()
+            model_content = content[start_pos:end_pos]
+        else:
+            # Extract content from start of selected model to end of file
+            model_content = content[start_pos:]
+    else:
+        # Process the entire file
+        model_content = content
+
     # Storage for parsed EQG data
     eqg_data = {
-        'model_name': '',
+        'model_name': selected_model,
         'materials': [],
         'vertices': [],
         'faces': [],
         'bones': []
     }
 
-    with open(input_file, 'r') as f:
-        content = f.read()
-
-    # Extract model name
-    model_name_match = re.search(r'EQGMODELDEF\s+"([^"]+)"', content)
-    if model_name_match:
-        eqg_data['model_name'] = model_name_match.group(1)
-        print(f"Model name: {eqg_data['model_name']}")
+    print(f"Model name: {eqg_data['model_name']}")
 
     # Extract materials
     material_section_match = re.search(
-        r'NUMMATERIALS\s+(\d+)(.*?)(?=NUMVERTICES)', content, re.DOTALL)
+        r'NUMMATERIALS\s+(\d+)(.*?)(?=NUMVERTICES)', model_content, re.DOTALL)
     if material_section_match:
         num_materials = int(material_section_match.group(1))
         material_section = material_section_match.group(2)
@@ -76,7 +130,7 @@ def parse_eqg(input_file):
 
     # Extract vertices - IMPROVED REGEX PATTERN
     vertex_block_match = re.search(
-        r'NUMVERTICES\s+(\d+)(.*?)NUMFACES', content, re.DOTALL)
+        r'NUMVERTICES\s+(\d+)(.*?)NUMFACES', model_content, re.DOTALL)
     if vertex_block_match:
         num_vertices = int(vertex_block_match.group(1))
         vertex_block = vertex_block_match.group(2)
@@ -153,7 +207,7 @@ def parse_eqg(input_file):
 
     # Extract faces
     face_block_match = re.search(
-        r'NUMFACES\s+(\d+)(.*?)(?=NUMBONES|$)', content, re.DOTALL)
+        r'NUMFACES\s+(\d+)(.*?)(?=NUMBONES|$)', model_content, re.DOTALL)
     if face_block_match:
         num_faces = int(face_block_match.group(1))
         face_block = face_block_match.group(2)
@@ -207,11 +261,104 @@ def parse_eqg(input_file):
 
         print(f"Processed {len(eqg_data['faces'])} faces")
 
+    # Extract bones
+    bone_block_match = re.search(
+        r'NUMBONES\s+(\d+)(.*?)(?=\Z)', model_content, re.DOTALL)
+    if bone_block_match:
+        num_bones = int(bone_block_match.group(1))
+        bone_block = bone_block_match.group(2)
+
+        # Pattern to match bone definitions
+        bone_pattern = r'BONE\s+"([^"]+)"\s*//\s*(\d+)([\s\S]*?)(?=BONE\s+"|$)'
+        bone_matches = re.findall(bone_pattern, bone_block, re.DOTALL)
+
+        print(f"Found {len(bone_matches)} bone blocks (expected {num_bones})")
+
+        for bone_name, bone_index, bone_data in bone_matches:
+            bone = {
+                'name': bone_name,
+                'index': int(bone_index)
+            }
+
+            # Extract next bone
+            next_match = re.search(r'NEXT\s+(-?\d+)', bone_data)
+            if next_match:
+                bone['next'] = int(next_match.group(1))
+
+            # Extract children
+            children_match = re.search(r'CHILDREN\s+(\d+)', bone_data)
+            if children_match:
+                bone['children'] = int(children_match.group(1))
+
+            # Extract child index
+            child_index_match = re.search(r'CHILDINDEX\s+(-?\d+)', bone_data)
+            if child_index_match:
+                bone['child_index'] = int(child_index_match.group(1))
+
+            # Extract pivot
+            pivot_match = re.search(
+                r'PIVOT\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', bone_data)
+            if pivot_match:
+                try:
+                    bone['pivot'] = [
+                        parse_float(pivot_match.group(1)),
+                        parse_float(pivot_match.group(2)),
+                        parse_float(pivot_match.group(3))
+                    ]
+                except Exception as e:
+                    print(
+                        f"Warning: Could not parse pivot for bone {bone_name}: {e}")
+                    bone['pivot'] = [0.0, 0.0, 0.0]
+
+            # Extract quaternion
+            quat_match = re.search(
+                r'QUATERNION\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', bone_data)
+            if quat_match:
+                try:
+                    bone['quaternion'] = [
+                        parse_float(quat_match.group(1)),
+                        parse_float(quat_match.group(2)),
+                        parse_float(quat_match.group(3)),
+                        parse_float(quat_match.group(4))
+                    ]
+                except Exception as e:
+                    print(
+                        f"Warning: Could not parse quaternion for bone {bone_name}: {e}")
+                    bone['quaternion'] = [0.0, 0.0, 0.0, 1.0]
+
+            # Extract scale
+            scale_match = re.search(
+                r'SCALE\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)', bone_data)
+            if scale_match:
+                try:
+                    bone['scale'] = [
+                        parse_float(scale_match.group(1)),
+                        parse_float(scale_match.group(2)),
+                        parse_float(scale_match.group(3))
+                    ]
+                except Exception as e:
+                    print(
+                        f"Warning: Could not parse scale for bone {bone_name}: {e}")
+                    bone['scale'] = [1.0, 1.0, 1.0]
+
+            eqg_data['bones'].append(bone)
+
+        print(f"Processed {len(eqg_data['bones'])} bones")
+
+        # Verify all bones were found and processed
+        if len(eqg_data['bones']) != num_bones:
+            print(
+                f"WARNING: Bone count mismatch! Found {len(eqg_data['bones'])}, expected {num_bones}")
+
     return eqg_data
 
 
 def convert_to_s3d(eqg_data):
     """Convert the parsed EQG data to S3D format."""
+    if not eqg_data:
+        print("No EQG data provided for conversion. Aborting.")
+        return None
+
     print("Converting to S3D format...")
     s3d_data = {
         'sprite_defs': [],
@@ -302,13 +449,44 @@ def convert_to_s3d(eqg_data):
         dm_sprite_def += f'\t\tVXYZ {x:.8e} {y:.8e} {z:.8e}\n'
 
     # Add UVs
+    # Determine if we need to flip the UVs
+    need_flip = False
+
+    # Auto-detect by analyzing the UVs in the model
+    if len(eqg_data["vertices"]) > 10:
+        # Check a sample of vertices with UVs
+        sample_vertices = []
+        for v in eqg_data["vertices"]:
+            if 'uvs' in v and len(v['uvs']) > 0:
+                sample_vertices.append(v)
+                if len(sample_vertices) >= 20:  # Sample size of 20 for better accuracy
+                    break
+
+        if sample_vertices:
+            # Look at distribution of UV values
+            # In many asset creation tools, UV Y values are flipped (1 at bottom rather than top)
+            v_values = [v['uvs'][0][1] for v in sample_vertices]
+            v_in_range = sum(1 for v in v_values if 0 <= v <= 1)
+
+            # If most are already in 0-1 range, they likely need flipping
+            if v_in_range >= len(v_values) * 0.7:  # 70% threshold
+                need_flip = True
+
+            print(
+                f"UV analysis: {v_in_range}/{len(v_values)} Y values in 0-1 range. {'Flipping' if need_flip else 'Not flipping'} UVs.")
+
     dm_sprite_def += f'\n\tNUMUVS {len(eqg_data["vertices"])}\n'
     for vertex in eqg_data['vertices']:
         if 'uvs' in vertex and len(vertex['uvs']) > 0:
             u, v = vertex['uvs'][0]
+            # Flip the V coordinate (1.0 - v) if needed
+            if need_flip:
+                v = 1.0 - v
             dm_sprite_def += f'\t\tUV {u:.8e} {v:.8e}\n'
         else:
-            dm_sprite_def += '\t\tUV 0.00000000e+00 0.00000000e+00\n'
+            # Default UV, potentially y-flipped
+            v_default = 1.0 if need_flip else 0.0
+            dm_sprite_def += f'\t\tUV 0.00000000e+00 {v_default:.8e}\n'
 
    # Add vertex normals
     dm_sprite_def += f'\n\tNUMVERTEXNORMALS {len(eqg_data["vertices"])}\n'
@@ -362,11 +540,15 @@ def convert_to_s3d(eqg_data):
         material_name_to_index[material['name']] = i
 
     # Generate FACEMATERIALGROUPS section
-    dm_sprite_def += f'\tFACEMATERIALGROUPS {len(material_order)}'
+    material_face_groups = []
     for mat_name in material_order:
         face_count = material_to_faces[mat_name]
         mat_index = material_name_to_index.get(
             mat_name, 0)  # Default to 0 if not found
+        material_face_groups.append((face_count, mat_index))
+
+    dm_sprite_def += f'\tFACEMATERIALGROUPS {len(material_face_groups)}'
+    for face_count, mat_index in material_face_groups:
         dm_sprite_def += f' {face_count} {mat_index}'
     dm_sprite_def += '\n'
 
@@ -378,12 +560,13 @@ def convert_to_s3d(eqg_data):
     vertex_to_material = {}
     for face in eqg_data['faces']:
         mat_name = face['material']
-        mat_index = material_name_to_index.get(mat_name, 0)
+        if mat_name in material_name_to_index:
+            mat_index = material_name_to_index[mat_name]
 
-        # Assign each vertex in this face to this material if not already assigned
-        for vertex_idx in face['indices']:
-            if vertex_idx not in vertex_to_material:
-                vertex_to_material[vertex_idx] = mat_index
+            # Assign each vertex in this face to this material if not already assigned
+            for vertex_idx in face['indices']:
+                if vertex_idx not in vertex_to_material and vertex_idx < len(eqg_data['vertices']):
+                    vertex_to_material[vertex_idx] = mat_index
 
     # Count vertices per material
     material_vertex_counts = {}
@@ -391,7 +574,7 @@ def convert_to_s3d(eqg_data):
         material_vertex_counts[mat_index] = 0
 
     # Count vertices for each material
-    for mat_index in vertex_to_material.values():
+    for vertex_idx, mat_index in vertex_to_material.items():
         material_vertex_counts[mat_index] += 1
 
     # Handle vertices that aren't part of any face
@@ -409,10 +592,14 @@ def convert_to_s3d(eqg_data):
                 material_vertex_counts[0] += 1
 
     # Generate VERTEXMATERIALGROUPS section
-    dm_sprite_def += f'\tVERTEXMATERIALGROUPS {len(material_vertex_counts)}'
-    for mat_index, count in sorted(material_vertex_counts.items()):
+    material_vertex_groups = []
+    for mat_index, count in material_vertex_counts.items():
         if count > 0:
-            dm_sprite_def += f' {count} {mat_index}'
+            material_vertex_groups.append((count, mat_index))
+
+    dm_sprite_def += f'\tVERTEXMATERIALGROUPS {len(material_vertex_groups)}'
+    for count, mat_index in material_vertex_groups:
+        dm_sprite_def += f' {count} {mat_index}'
     dm_sprite_def += '\n'
 
     # Calculate bounding box
@@ -499,8 +686,7 @@ def write_s3d(s3d_data, output_file):
     print(f"Writing S3D file: {output_file}")
 
     # First, add a simple header comment
-    header = "// wcemu v0.0.1\n"
-    header += "// This file was created by EQG to S3D converter\n\n"
+    header = "// This Quail .wce file was created by EQG to S3D converter\n\n"
 
     with open(output_file, 'w') as f:
         # Write header
@@ -539,15 +725,24 @@ def main():
     # Run the conversion process
     eqg_data = parse_eqg(args.input)
 
+    if not eqg_data:
+        print("ERROR: Failed to parse EQG data. Conversion aborted.")
+        return 1
+
     # If custom item number is provided, override the model name
     if args.it:
         print(f"Using custom model name: {args.it}")
         eqg_data['model_name'] = args.it
 
     s3d_data = convert_to_s3d(eqg_data)
+    if not s3d_data:
+        print("ERROR: Failed to convert EQG data to S3D format. Conversion aborted.")
+        return 1
+
     write_s3d(s3d_data, args.output)
 
     print("Conversion completed successfully!")
+    return 0
 
 
 if __name__ == '__main__':
