@@ -15,6 +15,18 @@ def parse_float(value):
         return float(value)
 
 
+def extract_quoted_text(text):
+    """Extract text from within quotes."""
+    match = re.search(r'"([^"]+)"', text)
+    if match:
+        return match.group(1)
+    return None
+
+
+#############################################################
+# EQG TO S3D CONVERSION FUNCTIONS
+#############################################################
+
 def parse_eqg(input_file):
     """Parse the EQG file into a structured format."""
     print(f"Parsing EQG file: {input_file}")
@@ -712,34 +724,405 @@ def write_s3d(s3d_data, output_file):
         f.write(s3d_data['actor_def'])
 
 
+#############################################################
+# S3D TO EQG CONVERSION FUNCTIONS
+#############################################################
+
+def parse_s3d(input_file):
+    """Parse the S3D file into a structured format."""
+    print(f"Parsing S3D file: {input_file}")
+
+    try:
+        with open(input_file, 'r') as f:
+            content = f.read()
+
+        # Find actor definition to get model name
+        actor_def_match = re.search(r'ACTORDEF\s+"([^"]+)"', content)
+        if not actor_def_match:
+            print("No ACTORDEF found in the file! Cannot determine model name.")
+            return None
+
+        actor_def_name = actor_def_match.group(1)
+        # Extract model name from ACTORDEF name (usually IT#_ACTORDEF)
+        model_name = actor_def_name.replace("_ACTORDEF", "")
+        print(f"Found model name: {model_name}")
+
+        # Find the DMSPRITEDEF2 block
+        dm_sprite_match = re.search(
+            r'DMSPRITEDEF2\s+"([^"]+)"(.*?)(?=ACTORDEF|\Z)', content, re.DOTALL)
+        if not dm_sprite_match:
+            print("No DMSPRITEDEF2 found in the file! Cannot extract model data.")
+            return None
+
+        dm_sprite_name = dm_sprite_match.group(1)
+        dm_sprite_content = dm_sprite_match.group(2)
+        print(f"Found DMSPRITEDEF2: {dm_sprite_name}")
+
+        # Find material palette
+        material_palette_match = re.search(
+            r'MATERIALPALETTE\s+"([^"]+)"(.*?)(?=DMSPRITEDEF2|\Z)', content, re.DOTALL)
+        if not material_palette_match:
+            print("No MATERIALPALETTE found in the file! Cannot extract materials.")
+            return None
+
+        material_palette_name = material_palette_match.group(1)
+        material_palette_content = material_palette_match.group(2)
+        print(f"Found MATERIALPALETTE: {material_palette_name}")
+
+        # Extract materials
+        material_defs = []
+        material_matches = re.findall(
+            r'MATERIAL\s+"([^"]+)"', material_palette_content)
+        print(f"Found {len(material_matches)} materials in palette")
+
+        # For each material in the palette, find its definition
+        for material_name in material_matches:
+            material_def_match = re.search(
+                f'MATERIALDEFINITION\\s+"{material_name}"(.*?)(?=MATERIALDEFINITION|SIMPLESPRITEDEF|MATERIALPALETTE|DMSPRITEDEF2|\\Z)', content, re.DOTALL)
+            if material_def_match:
+                material_def_content = material_def_match.group(1)
+
+                # Find the sprite tag
+                sprite_tag_match = re.search(
+                    r'TAG\s+"([^"]+)"', material_def_content)
+                sprite_tag = sprite_tag_match.group(
+                    1) if sprite_tag_match else ""
+
+                # Find the sprite definition
+                sprite_def_match = re.search(
+                    f'SIMPLESPRITEDEF\\s+"{sprite_tag}"(.*?)(?=SIMPLESPRITEDEF|MATERIALDEFINITION|\\Z)', content, re.DOTALL)
+                if sprite_def_match:
+                    sprite_def_content = sprite_def_match.group(1)
+
+                    # Find the texture file
+                    file_match = re.search(
+                        r'FILE\s+"([^"]+)"', sprite_def_content)
+                    texture_file = file_match.group(1) if file_match else ""
+
+                    material_defs.append({
+                        'name': material_name,
+                        'sprite_tag': sprite_tag,
+                        'texture_file': texture_file
+                    })
+                    print(
+                        f"  Processed material: {material_name}, texture: {texture_file}")
+
+        # Create data structure for EQG model
+        s3d_data = {
+            'model_name': model_name,
+            'materials': material_defs,
+            'vertices': [],
+            'faces': [],
+            'bones': []  # S3D may not have bone data
+        }
+
+        # Extract vertices
+        vertices_match = re.search(
+            r'NUMVERTICES\s+(\d+)(.*?)NUMUVS', dm_sprite_content, re.DOTALL)
+        if vertices_match:
+            num_vertices = int(vertices_match.group(1))
+            vertices_content = vertices_match.group(2)
+            print(f"Found NUMVERTICES: {num_vertices}")
+
+            vertex_pattern = r'VXYZ\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)'
+            vertex_matches = re.findall(vertex_pattern, vertices_content)
+            print(f"Extracted {len(vertex_matches)} vertex positions")
+
+            for i, (x, y, z) in enumerate(vertex_matches):
+                s3d_data['vertices'].append({
+                    'position': [parse_float(x), parse_float(y), parse_float(z)],
+                    'uvs': [],
+                    'normal': []
+                })
+
+        # Extract UVs
+        uvs_match = re.search(
+            r'NUMUVS\s+(\d+)(.*?)NUMVERTEXNORMALS', dm_sprite_content, re.DOTALL)
+        if uvs_match:
+            num_uvs = int(uvs_match.group(1))
+            uvs_content = uvs_match.group(2)
+            print(f"Found NUMUVS: {num_uvs}")
+
+            uv_pattern = r'UV\s+([-\d.e+]+)\s+([-\d.e+]+)'
+            uv_matches = re.findall(uv_pattern, uvs_content)
+            print(f"Extracted {len(uv_matches)} UV coordinates")
+
+            for i, (u, v) in enumerate(uv_matches):
+                if i < len(s3d_data['vertices']):
+                    # Preserve the original sign of the V coordinate
+                    u_val = parse_float(u)
+                    v_val = parse_float(v)
+                    s3d_data['vertices'][i]['uvs'].append([u_val, v_val])
+
+        # Extract normals
+        normals_match = re.search(
+            r'NUMVERTEXNORMALS\s+(\d+)(.*?)(?=NUMVERTEXCOLORS|SKINASSIGNMENTGROUPS)', dm_sprite_content, re.DOTALL)
+        if normals_match:
+            num_normals = int(normals_match.group(1))
+            normals_content = normals_match.group(2)
+            print(f"Found NUMVERTEXNORMALS: {num_normals}")
+
+            normal_pattern = r'NXYZ\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)'
+            normal_matches = re.findall(normal_pattern, normals_content)
+            print(f"Extracted {len(normal_matches)} vertex normals")
+
+            for i, (nx, ny, nz) in enumerate(normal_matches):
+                if i < len(s3d_data['vertices']):
+                    s3d_data['vertices'][i]['normal'] = [
+                        parse_float(nx), parse_float(ny), parse_float(nz)]
+
+        # Extract faces
+        faces_match = re.search(
+            r'NUMFACE2S\s+(\d+)(.*?)(?=NUMMESHOPS|\Z)', dm_sprite_content, re.DOTALL)
+        if faces_match:
+            num_faces = int(faces_match.group(1))
+            faces_content = faces_match.group(2)
+            print(f"Found NUMFACE2S: {num_faces}")
+
+            # Extract face material groups to assign materials to faces
+            material_assignments = []
+
+            material_groups_match = re.search(
+                r'FACEMATERIALGROUPS\s+(\d+)(.*?)(?=VERTEXMATERIALGROUPS|\Z)', dm_sprite_content, re.DOTALL)
+            if material_groups_match:
+                num_groups = int(material_groups_match.group(1))
+                groups_content = material_groups_match.group(2).strip()
+                print(f"Found FACEMATERIALGROUPS with {num_groups} groups")
+                print(f"Raw material groups content: {groups_content}")
+
+                # Extract only the numeric values
+                numbers = re.findall(r'\d+', groups_content)
+                print(f"Extracted numbers: {numbers}")
+
+                if len(numbers) >= 2:  # Ensure we have at least one pair of numbers
+                    try:
+                        i = 0
+                        while i < len(numbers) - 1:
+                            face_count = int(numbers[i])
+                            material_index = int(numbers[i+1])
+
+                            for _ in range(face_count):
+                                material_assignments.append(material_index)
+
+                            i += 2
+                    except Exception as e:
+                        print(f"Error parsing FACEMATERIALGROUPS: {str(e)}")
+                        # Create a fallback assignment - assign all faces to material 0
+                        material_assignments = [0] * num_faces
+                        print(
+                            "Using fallback material assignments (all faces assigned to material 0)")
+                else:
+                    # Not enough numbers, create a fallback
+                    material_assignments = [0] * num_faces
+                    print(
+                        "Not enough numbers in FACEMATERIALGROUPS, using fallback assignments")
+            else:
+                # No material groups found, create a fallback
+                material_assignments = [0] * num_faces
+                print("No FACEMATERIALGROUPS found, using fallback assignments")
+
+            print(
+                f"Generated {len(material_assignments)} material assignments for faces")
+
+            # Process each face
+            # More robust pattern that doesn't assume TRIANGLE directly follows PASSABLE
+            face_pattern = r'DMFACE2\s+//(\d+).*?PASSABLE\s+(\d+).*?TRIANGLE\s+(\d+)\s+(\d+)\s+(\d+)'
+            face_matches = re.findall(face_pattern, faces_content, re.DOTALL)
+            print(f"Extracted {len(face_matches)} faces")
+
+            for i, (face_idx, passable, v1, v2, v3) in enumerate(face_matches):
+                face_idx = int(face_idx)
+                material_index = material_assignments[face_idx] if face_idx < len(
+                    material_assignments) else 0
+
+                material_name = material_defs[material_index]['name'] if material_index < len(
+                    material_defs) else "DEFAULT"
+
+                # Convert the triangle indices - may need to adjust ordering from S3D to EQG
+                s3d_data['faces'].append({
+                    # Adjusted from S3D to EQG winding order
+                    'indices': [int(v1), int(v3), int(v2)],
+                    'material': material_name.replace("_MDF", ""),
+                    'passable': int(passable),
+                    'transparent': 0,  # Default values as these may not be directly available in S3D
+                    'collision': 0
+                })
+
+                # Print the first and last 5 faces for debugging
+                if i < 5 or i >= len(face_matches) - 5:
+                    print(
+                        f"  Face {face_idx}: material={material_name}, vertices={v1},{v2},{v3}, passable={passable}")
+
+        print(
+            f"Completed parsing S3D model with {len(s3d_data['vertices'])} vertices, {len(s3d_data['faces'])} faces, {len(s3d_data['materials'])} materials")
+        return s3d_data
+
+    except Exception as e:
+        print(f"Error parsing S3D file: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def convert_to_eqg(s3d_data):
+    """Convert the parsed S3D data to EQG format."""
+    if not s3d_data:
+        print("No S3D data provided for conversion. Aborting.")
+        return None
+
+    print("Converting to EQG format...")
+
+    eqg_output = []
+
+    # Start with EQGMODELDEF header
+    eqg_output.append(f'EQGMODELDEF "{s3d_data["model_name"]}"')
+    eqg_output.append('\tVERSION 3')
+
+    # Add materials
+    eqg_output.append(f'\tNUMMATERIALS {len(s3d_data["materials"])}')
+    for i, material in enumerate(s3d_data["materials"]):
+        material_name = material["name"].replace("_MDF", "")
+        eqg_output.append(f'\t\tMATERIAL "{material_name}"')
+        eqg_output.append('\t\t\tSHADERTAG "Opaque_MaxCB1.fx"')
+        eqg_output.append('\t\t\tHEXONEFLAG 0')
+        eqg_output.append('\t\t\tNUMPROPERTIES 1')
+
+        # Add texture property
+        texture_file = material["texture_file"].lower()
+        eqg_output.append(
+            f'\t\t\t\tPROPERTY "e_TextureDiffuse0" 2 "{texture_file}"')
+
+        # Add animation properties
+        eqg_output.append('\t\t\tANIMSLEEP 0')
+        eqg_output.append('\t\t\tNUMANIMTEXTURES 0')
+
+    # Add vertices
+    eqg_output.append(f'\tNUMVERTICES {len(s3d_data["vertices"])}')
+    for i, vertex in enumerate(s3d_data["vertices"]):
+        eqg_output.append(f'\t\tVERTEX // {i}')
+
+        # Position
+        x, y, z = vertex["position"]
+        eqg_output.append(f'\t\t\tXYZ {x:.8e} {y:.8e} {z:.8e}')
+
+        # UVs
+        if vertex["uvs"]:
+            u, v = vertex["uvs"][0]
+            eqg_output.append(f'\t\t\tUV {u:.8e} {v:.8e}')
+            eqg_output.append('\t\t\tUV2 0.00000000e+00 0.00000000e+00')
+        else:
+            eqg_output.append('\t\t\tUV 0.00000000e+00 0.00000000e+00')
+            eqg_output.append('\t\t\tUV2 0.00000000e+00 0.00000000e+00')
+
+        # Normal
+        if vertex["normal"]:
+            nx, ny, nz = vertex["normal"]
+            eqg_output.append(f'\t\t\tNORMAL {nx:.8e} {ny:.8e} {nz:.8e}')
+        else:
+            eqg_output.append(
+                '\t\t\tNORMAL 0.00000000e+00 1.00000000e+00 0.00000000e+00')
+
+        # Add vertex color (default)
+        eqg_output.append('\t\t\tTINT 120 120 120 255')
+        eqg_output.append('\t\t\tNUMWEIGHTS 0')
+
+    # Add faces
+    eqg_output.append(f'\tNUMFACES {len(s3d_data["faces"])}')
+    for i, face in enumerate(s3d_data["faces"]):
+        eqg_output.append(f'\t\tFACE // {i}')
+
+        # Add triangle indices
+        v1, v2, v3 = face["indices"]
+        eqg_output.append(f'\t\t\tTRIANGLE {v1} {v2} {v3}')
+
+        # Add material and flags
+        eqg_output.append(f'\t\t\tMATERIAL "{face["material"]}"')
+        eqg_output.append(f'\t\t\tPASSABLE {face["passable"]}')
+        eqg_output.append(f'\t\t\tTRANSPARENT {face["transparent"]}')
+        eqg_output.append(f'\t\t\tCOLLISIONREQUIRED {face["collision"]}')
+        eqg_output.append('\t\t\tCULLED 0')
+        eqg_output.append('\t\t\tDEGENERATE 0')
+
+    # Add bones section (even if empty)
+    eqg_output.append('\tNUMBONES 0')
+
+    return '\n'.join(eqg_output)
+
+
+def write_eqg(eqg_content, output_file):
+    """Write the converted EQG data to the output file."""
+    print(f"Writing EQG file: {output_file}")
+
+    with open(output_file, 'w') as f:
+        f.write(eqg_content)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Convert EQG models to S3D format.')
-    parser.add_argument('input', help='Input EQG model file')
-    parser.add_argument('output', help='Output S3D model file')
+        description='Convert between EQG and S3D model formats.')
+    parser.add_argument('input', help='Input model file')
+    parser.add_argument('output', help='Output model file')
     parser.add_argument(
-        '--it', help='Specify a custom item number for the output model name (e.g., "IT123")', default=None)
+        '--it', help='Specify a custom item number/name for the output model', default=None)
 
     args = parser.parse_args()
+    direction = ""
 
-    # Run the conversion process
-    eqg_data = parse_eqg(args.input)
+    with open(args.input, 'r') as f:
+        # Read first 500 chars to determine file type
+        content = f.read(500)
+        if 'EQGMODELDEF' in content:
+            direction = 'to_s3d'
+        elif 'SIMPLESPRITEDEF' in content or 'MATERIALDEFINITION' in content:
+            direction = 'to_eqg'
+        else:
+            print("Could not determine file type.")
+            return 1
 
-    if not eqg_data:
-        print("ERROR: Failed to parse EQG data. Conversion aborted.")
-        return 1
+    # Run the appropriate conversion process
+    if direction == 'to_s3d':
+        print("Converting EQG to S3D...")
+        # Parse EQG
+        eqg_data = parse_eqg(args.input)
+        if not eqg_data:
+            print("ERROR: Failed to parse EQG data. Conversion aborted.")
+            return 1
 
-    # If custom item number is provided, override the model name
-    if args.it:
-        print(f"Using custom model name: {args.it}")
-        eqg_data['model_name'] = args.it
+        # Apply custom name if provided
+        if args.it:
+            print(f"Using custom model name: {args.it}")
+            eqg_data['model_name'] = args.it
 
-    s3d_data = convert_to_s3d(eqg_data)
-    if not s3d_data:
-        print("ERROR: Failed to convert EQG data to S3D format. Conversion aborted.")
-        return 1
+        # Convert to S3D
+        s3d_data = convert_to_s3d(eqg_data)
+        if not s3d_data:
+            print("ERROR: Failed to convert EQG data to S3D format. Conversion aborted.")
+            return 1
 
-    write_s3d(s3d_data, args.output)
+        # Write output
+        write_s3d(s3d_data, args.output)
+
+    elif direction == 'to_eqg':
+        print("Converting S3D to EQG...")
+        # Parse S3D
+        s3d_data = parse_s3d(args.input)
+        if not s3d_data:
+            print("ERROR: Failed to parse S3D data. Conversion aborted.")
+            return 1
+
+        # Apply custom name if provided
+        if args.it:
+            print(f"Using custom model name: {args.it}")
+            s3d_data['model_name'] = args.it
+
+        # Convert to EQG
+        eqg_content = convert_to_eqg(s3d_data)
+        if not eqg_content:
+            print("ERROR: Failed to convert S3D data to EQG format. Conversion aborted.")
+            return 1
+
+        # Write output
+        write_eqg(eqg_content, args.output)
 
     print("Conversion completed successfully!")
     return 0
